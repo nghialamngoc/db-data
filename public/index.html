@@ -70,7 +70,9 @@
     <div class="row">
       <input id="mongoUrl" type="password" placeholder="mongodb+srv://user:pass@host/db?..." autocomplete="off" spellcheck="false" />
       <button class="ghost" id="toggleUrl" type="button">Hiện</button>
+      <button id="checkConn" type="button">Test kết nối</button>
     </div>
+    <div id="connResult" class="hint" style="margin-top:8px; display:none"></div>
     <div class="save-row">
       <input type="checkbox" id="remember" /> <label for="remember" style="margin:0">Nhớ URL trong phiên này (sessionStorage — mất khi đóng tab)</label>
     </div>
@@ -123,6 +125,27 @@ $('#remember').onchange = e => {
 urlEl.oninput = () => { try { if ($('#remember').checked) sessionStorage.setItem('mongoUrl', urlEl.value) } catch {} }
 
 function setStatus(ok, title) { status.className = 'dot' + (ok ? ' ok' : ''); status.title = title || '' }
+
+$('#checkConn').onclick = async () => {
+  const mongoUrl = urlEl.value.trim()
+  const r = $('#connResult'); r.style.display = 'block'
+  if (!mongoUrl) { r.textContent = 'Chưa nhập Mongo URL'; r.style.color = '#ffb4b4'; return }
+  const btn = $('#checkConn'); btn.disabled = true; btn.textContent = 'Đang kiểm…'
+  r.textContent = 'Đang kết nối…'; r.style.color = 'var(--muted)'
+  try {
+    const resp = await fetch('/api/ping', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mongoUrl })
+    })
+    const data = await resp.json()
+    if (resp.ok) { setStatus(true, 'đã kết nối'); r.textContent = `✓ Kết nối OK — db: ${data.db} (${data.ms}ms)`; r.style.color = 'var(--str)' }
+    else { setStatus(false, data.error); r.textContent = '✗ ' + (data.error || ('HTTP ' + resp.status)); r.style.color = '#ffb4b4' }
+  } catch (e) {
+    setStatus(false, e.message); r.textContent = '✗ ' + (e.message || String(e)); r.style.color = '#ffb4b4'
+  } finally {
+    btn.disabled = false; btn.textContent = 'Test kết nối'
+  }
+}
 
 async function search() {
   const mongoUrl = urlEl.value.trim(), value = leadEl.value.trim()

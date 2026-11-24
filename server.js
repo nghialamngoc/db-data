@@ -75,6 +75,18 @@ app.post('/api/query', async (req, res) => {
   }
 })
 
+app.post('/api/ping', async (req, res) => {
+  const { mongoUrl } = req.body || {}
+  const started = Date.now()
+  try {
+    const db = await getDb(mongoUrl)
+    await db.command({ ping: 1 })
+    res.json({ ok: true, db: db.databaseName, ms: Date.now() - started })
+  } catch (e) {
+    res.status(502).json({ error: e.message || String(e) })
+  }
+})
+
 app.get('/api/health', (_req, res) => res.json({ ok: true }))
 
 const PORT = process.env.PORT || 4500
