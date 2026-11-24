@@ -5,6 +5,7 @@
 
 const dns = require('dns').promises
 const net = require('net')
+const tls = require('tls')
 const https = require('https')
 
 const uri = process.argv[2]
@@ -32,6 +33,21 @@ function tcpCheck(host, port) {
     s.on('connect', () => { s.destroy(); resolve({ host, port, ok: true, ms: Date.now() - start }) })
     s.on('timeout', () => { s.destroy(); resolve({ host, port, ok: false, err: 'timeout (bị chặn / IP chưa allowlist)' }) })
     s.on('error', e => resolve({ host, port, ok: false, err: e.code || e.message }))
+  })
+}
+
+// Atlas bắt buộc TLS. TCP mở nhưng TLS hỏng (proxy/SSL-inspection) cũng làm driver timeout.
+function tlsCheck(host, port) {
+  return new Promise(resolve => {
+    const start = Date.now()
+    const s = tls.connect({ host, port, servername: host, timeout: 6000 }, () => {
+      const ok = s.authorized
+      const err = ok ? null : (s.authorizationError && String(s.authorizationError))
+      s.destroy()
+      resolve({ host, ok, ms: Date.now() - start, err })
+    })
+    s.on('timeout', () => { s.destroy(); resolve({ host, ok: false, err: 'timeout khi bắt tay TLS' }) })
+    s.on('error', e => resolve({ host, ok: false, err: e.code || e.message }))
   })
 }
 
@@ -70,14 +86,24 @@ function parseHost(u) {
     console.log('\n=== 4. Kiểm TCP tới cổng 27017 của từng node ===')
     const results = await Promise.all(nodes.map(n => tcpCheck(n.host, n.port)))
     results.forEach(r => console.log('    ', r.ok ? 'OK  ' : 'FAIL', r.host + ':' + r.port, r.ok ? `(${r.ms}ms)` : '- ' + r.err))
-    const anyOk = results.some(r => r.ok)
+    const anyTcp = results.some(r => r.ok)
+
+    let tlsResults = []
+    if (anyTcp) {
+      console.log('\n=== 4b. Bắt tay TLS tới cổng 27017 (Atlas bắt buộc TLS) ===')
+      tlsResults = await Promise.all(nodes.map(n => tlsCheck(n.host, n.port)))
+      tlsResults.forEach(r => console.log('    ', r.ok ? 'OK  ' : 'FAIL', r.host, r.ok ? `(${r.ms}ms)` : '- ' + r.err))
+    }
+    const anyTls = tlsResults.some(r => r.ok)
+
     console.log('\n=== Kết luận ===')
-    if (!anyOk) {
-      console.log('    Không node nào mở cổng 27017 từ máy này.')
-      console.log('    => Thường là: IP ở bước 1 CHƯA được thêm vào Atlas Network Access,')
-      console.log('       hoặc firewall/egress của AVD chặn cổng 27017.')
+    if (!anyTcp) {
+      console.log('    Không node nào mở cổng 27017 => IP (bước 1) chưa allowlist hoặc firewall AVD chặn 27017.')
+    } else if (!anyTls) {
+      console.log('    TCP mở nhưng TLS HỎNG => có proxy/SSL-inspection chặn giữa AVD và Atlas,')
+      console.log('    hoặc cert không được tin cậy. Đây là nguyên nhân app timeout dù port mở.')
     } else {
-      console.log('    TCP tới 27017 OK — nếu app vẫn timeout thì kiểm tra lại user/pass hoặc tên DB trong URI.')
+      console.log('    TCP + TLS đều OK => mạng ổn. App timeout thì do user/pass hoặc tên DB trong URI.')
     }
   }
 
@@ -90,7 +116,11 @@ function parseHost(u) {
     console.log('    OK:', JSON.stringify(r))
     await c.close()
   } catch (e) {
-    console.log('    FAIL:', e.message)
+    if (/Cannot find module 'mongodb'/.test(e.message)) {
+      console.log("    (bỏ qua) chưa cài driver — chạy 'npm install' để test bước này; bước 1-4b đã đủ chẩn đoán mạng.")
+    } else {
+      console.log('    FAIL:', e.message)
+    }
   }
   process.exit(0)
 })()
