@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Mongo Lead Viewer</title>
+<style>
+  :root {
+    --bg:#0f141a; --panel:#161d26; --panel2:#1c2531; --border:#283240;
+    --text:#e6edf3; --muted:#8b98a8; --accent:#e87722; --accent2:#2f81f7;
+    --key:#79c0ff; --str:#7ee787; --num:#f0a868; --bool:#d2a8ff; --null:#8b98a8;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; font:14px/1.5 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;
+         background:var(--bg); color:var(--text); }
+  header { padding:14px 20px; border-bottom:1px solid var(--border); background:var(--panel);
+           display:flex; align-items:center; gap:12px; }
+  header h1 { font-size:15px; margin:0; font-weight:600; }
+  header .dot { width:9px; height:9px; border-radius:50%; background:#f85149; }
+  header .dot.ok { background:#3fb950; }
+  .wrap { max-width:1100px; margin:0 auto; padding:20px; }
+  .conn { background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:14px 16px; margin-bottom:16px; }
+  .conn label { display:block; font-size:12px; color:var(--muted); margin-bottom:6px; }
+  .row { display:flex; gap:10px; }
+  input[type=text], input[type=password] {
+    flex:1; background:var(--panel2); border:1px solid var(--border); color:var(--text);
+    padding:10px 12px; border-radius:8px; font:13px ui-monospace,SFMono-Regular,Menlo,monospace; outline:none; }
+  input:focus { border-color:var(--accent2); }
+  button { background:var(--accent); color:#fff; border:0; padding:10px 18px; border-radius:8px;
+           font-weight:600; cursor:pointer; white-space:nowrap; }
+  button:hover { filter:brightness(1.08); }
+  button:disabled { opacity:.5; cursor:default; }
+  .ghost { background:var(--panel2); color:var(--muted); border:1px solid var(--border); font-weight:500; }
+  .tabs { display:flex; gap:4px; margin-bottom:0; }
+  .tab { padding:9px 16px; border:1px solid var(--border); border-bottom:0; border-radius:8px 8px 0 0;
+         background:var(--panel2); color:var(--muted); cursor:pointer; font-size:13px; }
+  .tab.active { background:var(--panel); color:var(--text); font-weight:600; }
+  .tab.disabled { opacity:.4; cursor:not-allowed; }
+  .panel { background:var(--panel); border:1px solid var(--border); border-radius:0 10px 10px 10px; padding:16px; }
+  .hint { font-size:12px; color:var(--muted); margin:6px 2px 0; }
+  .meta { font-size:12px; color:var(--muted); margin:14px 2px 8px; display:flex; gap:14px; align-items:center; }
+  .err { background:#2d1517; border:1px solid #6e2b2f; color:#ffb4b4; padding:10px 12px; border-radius:8px;
+         font:12px ui-monospace,monospace; margin-top:14px; white-space:pre-wrap; }
+  .result { background:#0b1016; border:1px solid var(--border); border-radius:8px; padding:12px 14px; margin-top:10px;
+            font:12.5px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace; overflow:auto; max-height:70vh; }
+  .node { padding-left:16px; }
+  .node.root { padding-left:0; }
+  .tog { cursor:pointer; user-select:none; color:var(--muted); display:inline-block; width:12px; }
+  .k { color:var(--key); }
+  .s { color:var(--str); } .n { color:var(--num); } .b { color:var(--bool); } .nl { color:var(--null); }
+  .brace { color:var(--muted); }
+  .count { color:var(--muted); font-style:italic; }
+  .collapsed > .children { display:none; }
+  .collapsed > .tog::before { content:'▸'; } .tog::before { content:'▾'; }
+  .leaf .tog { visibility:hidden; }
+  .toolbar { display:flex; gap:8px; margin-top:10px; }
+  .toolbar button { padding:6px 12px; font-size:12px; font-weight:500; }
+  .save-row { display:flex; align-items:center; gap:6px; margin-top:8px; font-size:12px; color:var(--muted); }
+</style>
+</head>
+<body>
+<header>
+  <span id="status" class="dot" title="chưa kết nối"></span>
+  <h1>Mongo Lead Viewer</h1>
+</header>
+<div class="wrap">
+
+  <div class="conn">
+    <label>MongoDB connection string</label>
+    <div class="row">
+      <input id="mongoUrl" type="password" placeholder="mongodb+srv://user:pass@host/db?..." autocomplete="off" spellcheck="false" />
+      <button class="ghost" id="toggleUrl" type="button">Hiện</button>
+    </div>
+    <div class="save-row">
+      <input type="checkbox" id="remember" /> <label for="remember" style="margin:0">Nhớ URL trong phiên này (sessionStorage — mất khi đóng tab)</label>
+    </div>
+  </div>
+
+  <div class="tabs">
+    <div class="tab active" data-col="leads">Lead</div>
+    <div class="tab disabled" title="sắp có">Email Logs</div>
+    <div class="tab disabled" title="sắp có">Policy</div>
+    <div class="tab disabled" title="sắp có">Payment</div>
+  </div>
+
+  <div class="panel">
+    <div class="row">
+      <input id="leadId" type="text" placeholder="leadId (ObjectId)" spellcheck="false" />
+      <button id="search" type="button">Search</button>
+    </div>
+    <div class="hint">Nhập leadId → tìm trong collection <code>leads</code> theo <code>_id</code>. Chạy tool này trên máy đã được allowlist vào Atlas.</div>
+
+    <div id="meta" class="meta" style="display:none"></div>
+    <div id="toolbar" class="toolbar" style="display:none">
+      <button class="ghost" id="expandAll" type="button">Mở hết</button>
+      <button class="ghost" id="collapseAll" type="button">Thu hết</button>
+      <button class="ghost" id="copy" type="button">Copy JSON</button>
+    </div>
+    <div id="out"></div>
+  </div>
+</div>
+
+<script>
+const $ = s => document.querySelector(s)
+const urlEl = $('#mongoUrl'), leadEl = $('#leadId'), out = $('#out'),
+      meta = $('#meta'), toolbar = $('#toolbar'), status = $('#status')
+let lastDocs = null
+
+// restore remembered url
+try {
+  const saved = sessionStorage.getItem('mongoUrl')
+  if (saved) { urlEl.value = saved; $('#remember').checked = true }
+} catch {}
+
+$('#toggleUrl').onclick = () => {
+  const show = urlEl.type === 'password'
+  urlEl.type = show ? 'text' : 'password'
+  $('#toggleUrl').textContent = show ? 'Ẩn' : 'Hiện'
+}
+$('#remember').onchange = e => {
+  try { e.target.checked ? sessionStorage.setItem('mongoUrl', urlEl.value) : sessionStorage.removeItem('mongoUrl') } catch {}
+}
+urlEl.oninput = () => { try { if ($('#remember').checked) sessionStorage.setItem('mongoUrl', urlEl.value) } catch {} }
+
+function setStatus(ok, title) { status.className = 'dot' + (ok ? ' ok' : ''); status.title = title || '' }
+
+async function search() {
+  const mongoUrl = urlEl.value.trim(), value = leadEl.value.trim()
+  out.innerHTML = ''; meta.style.display = 'none'; toolbar.style.display = 'none'
+  if (!mongoUrl) return showErr('Chưa nhập Mongo URL')
+  if (!value) return showErr('Chưa nhập leadId')
+  $('#search').disabled = true; $('#search').textContent = 'Đang tìm…'
+  try {
+    const r = await fetch('/api/query', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mongoUrl, collection: 'leads', field: '_id', value })
+    })
+    const data = await r.json()
+    if (!r.ok) { setStatus(false, data.error); return showErr(data.error || ('HTTP ' + r.status)) }
+    setStatus(true, 'đã kết nối ' + (data.db || ''))
+    lastDocs = data.docs
+    meta.style.display = 'flex'
+    meta.innerHTML = `<span>db: <b>${esc(data.db)}</b></span><span>collection: <b>${esc(data.collection)}</b></span><span>kết quả: <b>${data.count}</b></span>`
+    if (!data.count) { out.innerHTML = '<div class="hint">Không tìm thấy document nào với leadId này.</div>'; return }
+    toolbar.style.display = 'flex'
+    out.innerHTML = ''
+    data.docs.forEach(d => out.appendChild(renderRoot(d)))
+  } catch (e) {
+    setStatus(false, e.message); showErr(e.message || String(e))
+  } finally {
+    $('#search').disabled = false; $('#search').textContent = 'Search'
+  }
+}
+$('#search').onclick = search
+leadEl.onkeydown = e => { if (e.key === 'Enter') search() }
+
+function showErr(m) { out.innerHTML = ''; const d = document.createElement('div'); d.className = 'err'; d.textContent = m; out.appendChild(d) }
+function esc(s) { return String(s == null ? '' : s).replace(/[&<>]/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;' }[c])) }
+
+function renderRoot(doc) {
+  const wrap = document.createElement('div')
+  wrap.className = 'result'
+  wrap.appendChild(renderNode('', doc, true))
+  return wrap
+}
+
+function renderNode(key, val, isRoot) {
+  const node = document.createElement('div')
+  node.className = 'node' + (isRoot ? ' root' : '')
+  const type = val === null ? 'null' : Array.isArray(val) ? 'array' : typeof val
+  const line = document.createElement('div')
+
+  const keyHtml = key !== '' ? `<span class="k">"${esc(key)}"</span><span class="brace">: </span>` : ''
+
+  if (type === 'object' || type === 'array') {
+    const entries = type === 'array' ? val.map((v, i) => [i, v]) : Object.entries(val)
+    const open = type === 'array' ? '[' : '{'
+    const close = type === 'array' ? ']' : '}'
+    const tog = document.createElement('span'); tog.className = 'tog'
+    line.appendChild(tog)
+    const label = document.createElement('span')
+    label.innerHTML = `${keyHtml}<span class="brace">${open}</span> <span class="count">${entries.length} ${type === 'array' ? 'items' : 'fields'}</span>`
+    line.appendChild(label)
+    node.appendChild(line)
+    const children = document.createElement('div'); children.className = 'children'
+    entries.forEach(([k, v]) => children.appendChild(renderNode(String(k), v, false)))
+    const closing = document.createElement('div'); closing.innerHTML = `<span class="brace">${close}</span>`; closing.style.paddingLeft = '16px'
+    children.appendChild(closing)
+    node.appendChild(children)
+    const toggle = () => node.classList.toggle('collapsed')
+    tog.onclick = toggle; label.onclick = toggle
+  } else {
+    node.classList.add('leaf')
+    const tog = document.createElement('span'); tog.className = 'tog'; line.appendChild(tog)
+    let cls = 'nl', disp = 'null'
+    if (type === 'string') { cls = 's'; disp = '"' + esc(val) + '"' }
+    else if (type === 'number') { cls = 'n'; disp = String(val) }
+    else if (type === 'boolean') { cls = 'b'; disp = String(val) }
+    const v = document.createElement('span'); v.className = cls; v.innerHTML = disp
+    const wrap = document.createElement('span'); wrap.innerHTML = keyHtml; wrap.appendChild(v)
+    line.appendChild(wrap)
+    node.appendChild(line)
+  }
+  return node
+}
+
+$('#expandAll').onclick = () => out.querySelectorAll('.node.collapsed').forEach(n => n.classList.remove('collapsed'))
+$('#collapseAll').onclick = () => out.querySelectorAll('.node').forEach(n => { if (n.querySelector('.children')) n.classList.add('collapsed') })
+$('#copy').onclick = async () => {
+  if (!lastDocs) return
+  const text = JSON.stringify(lastDocs.length === 1 ? lastDocs[0] : lastDocs, null, 2)
+  try { await navigator.clipboard.writeText(text); $('#copy').textContent = 'Đã copy ✓'; setTimeout(() => $('#copy').textContent = 'Copy JSON', 1200) } catch {}
+}
+</script>
+</body>
+</html>

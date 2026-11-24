@@ -1,0 +1,13 @@
+{
+  "name": "mongo-lead-viewer",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Local Mongo document viewer — paste a connection string, search a collection by id, see the full document like Compass. Run on a host allowlisted for the Atlas cluster.",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "4.21.2",
+    "mongodb": "6.12.0"
+  }
+}
